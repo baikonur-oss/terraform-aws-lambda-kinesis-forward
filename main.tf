@@ -113,7 +113,6 @@ module "iam" {
         {
             "Effect": "Allow",
             "Action": [
-                "logs:CreateLogGroup",
                 "logs:CreateLogStream",
                 "logs:DescribeLogGroups",
                 "logs:DescribeLogStreams",

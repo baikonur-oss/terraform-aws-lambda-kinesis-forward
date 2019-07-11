@@ -37,10 +37,12 @@ module "kinesis_forward" {
   memory     = "1024"
   batch_size = "100"
 
-  kinesis_stream_arn = "${aws_kinesis_stream.stream.arn}"
+  source_stream_name = "${aws_kinesis_stream.source.name}"
   target_stream_name = "${aws_kinesis_stream.target.name}"
-}
 
+  failed_log_s3_bucket = "failed-logs"
+  failed_log_s3_prefix = "forward"
+}
 ```
 
 Warning: use same module and package versions!
@@ -69,9 +71,7 @@ For more information on module version pinning, see [Selecting a Revision](https
 | failed\_log\_s3\_prefix | Path prefix for failed logs | string | n/a | yes |
 | handler | Lambda Function handler (entrypoint) | string | `"main.handler"` | no |
 | lambda\_package\_url | Lambda package URL (see Usage in README) | string | n/a | yes |
-| log\_bucket | Target S3 bucket to save data to | string | n/a | yes |
 | log\_id\_field | Key name for unique log ID | string | `"log_id"` | no |
-| log\_path\_prefix | Log file path prefix | string | n/a | yes |
 | log\_retention\_in\_days | Lambda Function log retention in days | string | `"30"` | no |
 | log\_timestamp\_field | Key name for log timestamp | string | `"time"` | no |
 | log\_type\_field | Key name for log type | string | `"log_type"` | no |

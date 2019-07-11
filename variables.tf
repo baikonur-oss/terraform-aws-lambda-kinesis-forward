@@ -17,14 +17,6 @@ variable "batch_size" {
   description = "Maximum number of records passed for a single Lambda invocation"
 }
 
-variable "log_bucket" {
-  description = "Target S3 bucket to save data to"
-}
-
-variable "log_path_prefix" {
-  description = "Log file path prefix"
-}
-
 variable "lambda_package_url" {
   description = "Lambda package URL (see Usage in README)"
 }
