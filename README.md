@@ -1,4 +1,4 @@
-# AWS %description% Terraform module
+# Amazon Kinesis to Kinesis log forwarding Terraform module
 
 Terraform module and Lambda for saving JSON log records from Kinesis Data Streams to S3.
 
