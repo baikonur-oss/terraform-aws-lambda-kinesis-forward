@@ -7,7 +7,7 @@ Terraform module and Lambda for saving JSON log records from Kinesis Data Stream
 ## Prerequisites
 1. Records in Kinesis stream must be valid JSON data. Non-JSON data will be **ignored**.
     1. gzipped JSON, [CloudWatch Logs subscription filters log format](https://docs.aws.amazon.com/ja_jp/AmazonCloudWatch/latest/logs/SubscriptionFilters.html) are supported.
-    2. Logs without either of necessary keys listed below will be saved as `unknown` as well.
+    2. Broken JSON logs or logs without log type will be saved to S3 as `unknown`.
 2. JSON data must have the following keys (key names are modifiable via variables):
     1. `log_type`: Log type identifier. Used for applying log type whitelist 
 3. Recommended keys (necessary if target stream has [lambda-kinesis-to-s3](https://github.com/baikonur-oss/terraform-aws-lambda-kinesis-to-s3) or other modules attached):
