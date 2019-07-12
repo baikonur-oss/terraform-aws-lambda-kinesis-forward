@@ -302,7 +302,7 @@ def handler(event, context):
 
     raw_records = event['Records']
 
-    logger.info(raw_records)
+    logger.debug(raw_records)
 
     log_dict: dict = decode_validate(raw_records)
     save_failed(log_dict)
