@@ -218,7 +218,7 @@ def kinesis_put(log_records: list):
     failed = list()
     for record in log_records:
         failed_records = []
-        print(record)
+        logger.debug(record)
 
         data_blob = json.dumps(record).encode('utf-8')
 
