@@ -214,40 +214,58 @@ def apply_whitelist(log_dict: dict, whitelist: list):
     return retval
 
 
+def split_list(l, size):
+    for i in range(0, len(l), size):
+        yield l[i:i+size]
+
+
 def kinesis_put(log_records: list):
-    failed = list()
-    for record in log_records:
-        failed_records = []
-        logger.debug(record)
+    retry_list = []
+    failed_list = []
 
-        data_blob = json.dumps(record).encode('utf-8')
+    # Each PutRecords request can support up to 500 records
+    # see: https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/kinesis.html#Kinesis.Client.put_records
 
-        success = False
-        while not success:
+    for batch in split_list(log_records, 500):
+        records = []
+        for record in batch:
+            data_blob = json.dumps(record).encode('utf-8')
+            partition_key: str = ''.join(random.choices(RANDOM_ALPHANUMERICAL, k=20))
+            records.append({
+                {
+                    'Data':            data_blob,
+                    'PartitionKey':    partition_key,
+                },
+            })
 
-            try:
-                partition_key: str = ''.join(random.choices(RANDOM_ALPHANUMERICAL, k=20))
-                response = kinesis_client.put_record(
-                    StreamName=TARGET_STREAM_NAME,
-                    Data=data_blob,
-                    PartitionKey=partition_key,
-                )
+        logger.debug(records)
 
-            except kinesis_client.exceptions.ResourceNotFoundException as e:
-                logger.error(e)
-                raise e
+        while len(records) > 0:
 
-            except kinesis_client.exceptions.ProvisionedThroughputExceededException as e:
-                logger.warning(f"Provisioned throughput is exceeded, sleeping for a second and trying again: {e}")
-                time.sleep(1)
-            except kinesis_client.exceptions.InternalFailureException as e:
-                logger.error(f"Something bad happened: {e}")
-                failed_records += data_blob
+            response = kinesis_client.put_records(
+                Records=records,
+                StreamName=TARGET_STREAM_NAME,
+            )
+
+            if response['FailedRecordCount'] == 0:
+                return []
             else:
-                logger.debug(f"> Response from Kinesis: {response}")
-                success = True
 
-    return failed
+                for index, record in enumerate(response['Records']):
+                    if 'ErrorCode' in record:
+                        if record['ErrorCode'] == 'ProvisionedThroughputExceededException':
+                            retry_list.append(records[index])
+                        elif record['ErrorCode'] == 'InternalFailure':
+                            failed_list.append(records[index])
+
+                records = retry_list
+                retry_list = []
+
+                if len(retry_list) > 0:
+                    logger.info(f"Waiting 1 second for capacity")
+                    time.sleep(1)
+
+    return failed_list
 
 
 def save_failed(log_dict: dict):
@@ -306,10 +324,14 @@ def handler(event, context):
 
     log_dict: dict = decode_validate(raw_records)
     save_failed(log_dict)
+
     log_dict_filtered: dict = apply_whitelist(log_dict, LOG_TYPE_FIELD_WHITELIST)
     logger.debug(log_dict_filtered)
+
     for key in log_dict_filtered:
         logger.info(f"Processing log type {key}, {len(log_dict_filtered[key]['records'])} records")
-        kinesis_put(log_dict_filtered[key]['records'])
+        failed_records = kinesis_put(log_dict_filtered[key]['records'])
+        if len(failed_records) > 0:
+            logger.error(f"Got failed records from Kinesis: {failed_records}")
 
     logger.info("Finished")
