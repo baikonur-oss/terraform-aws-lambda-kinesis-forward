@@ -33,7 +33,7 @@ patch(libraries)
 
 # global client instances
 s3 = boto3.client('s3')
-kinesis_client = boto3.client('kinesis', region_name='ap-northeast-1')
+kinesis_client = boto3.client('kinesis')
 
 # consts
 RANDOM_ALPHANUMERICAL = string.ascii_lowercase + string.ascii_uppercase + string.digits
@@ -220,13 +220,15 @@ def split_list(l, size):
 
 
 def kinesis_put(log_records: list):
+    xray_recorder.begin_subsegment(f"kinesis put records")
+
     retry_list = []
     failed_list = []
 
     # Each PutRecords request can support up to 500 records
     # see: https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/kinesis.html#Kinesis.Client.put_records
 
-    for batch in split_list(log_records, 500):
+    for batch_index, batch in enumerate(split_list(log_records, 500)):
         records = []
         for record in batch:
             data_blob = json.dumps(record).encode('utf-8')
@@ -238,17 +240,22 @@ def kinesis_put(log_records: list):
 
         logger.debug(records)
 
+        retry_count = 0
         while len(records) > 0:
-
+            subsegment = xray_recorder.begin_subsegment(f"put records batch {batch_index} retry {retry_count}")
             response = kinesis_client.put_records(
                 Records=records,
                 StreamName=TARGET_STREAM_NAME,
             )
+            subsegment.put_annotation("records", len(records))
+            subsegment.put_annotation("failed", response['FailedRecordCount'])
+            xray_recorder.end_subsegment()
 
             if response['FailedRecordCount'] == 0:
-                return []
+                break
             else:
-
+                retry_count += 1
+                subsegment.put_annotation("records", len(records))
                 for index, record in enumerate(response['Records']):
                     if 'ErrorCode' in record:
                         if record['ErrorCode'] == 'ProvisionedThroughputExceededException':
@@ -263,6 +270,7 @@ def kinesis_put(log_records: list):
                     logger.info(f"Waiting 1 second for capacity")
                     time.sleep(1)
 
+    xray_recorder.end_subsegment()
     return failed_list
 
 
