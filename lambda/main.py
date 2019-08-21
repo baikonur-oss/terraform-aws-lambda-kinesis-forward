@@ -230,12 +230,10 @@ def kinesis_put(log_records: list):
         records = []
         for record in batch:
             data_blob = json.dumps(record).encode('utf-8')
-            partition_key: str = ''.join(random.choices(RANDOM_ALPHANUMERICAL, k=20))
+            partition_key: str = ''.join(random.choices(RANDOM_ALPHANUMERICAL, k=20)) # max 256 chars
             records.append({
-                {
-                    'Data':            data_blob,
-                    'PartitionKey':    partition_key,
-                },
+                'Data':            data_blob,
+                'PartitionKey':    partition_key,
             })
 
         logger.debug(records)
