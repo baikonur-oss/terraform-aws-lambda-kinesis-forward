@@ -252,10 +252,11 @@ def kinesis_put(log_records: list):
             xray_recorder.end_subsegment()
 
             if response['FailedRecordCount'] == 0:
+                xray_recorder.end_subsegment()
                 break
             else:
                 retry_count += 1
-                subsegment.put_annotation("records", len(records))
+                subsegment.put_annotation("failed_records", response['FailedRecordCount'])
                 for index, record in enumerate(response['Records']):
                     if 'ErrorCode' in record:
                         if record['ErrorCode'] == 'ProvisionedThroughputExceededException':
@@ -269,6 +270,7 @@ def kinesis_put(log_records: list):
                 if len(retry_list) > 0:
                     logger.info(f"Waiting 1 second for capacity")
                     time.sleep(1)
+            xray_recorder.end_subsegment()
 
     xray_recorder.end_subsegment()
     return failed_list
