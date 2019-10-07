@@ -14,6 +14,7 @@ terraform.tfvars
 ### Python
 venv/
 .pyc
+bin/
 
 ### Others
 build/
