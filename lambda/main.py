@@ -284,9 +284,9 @@ def save_failed(log_dict: dict):
             data = log_dict[log_type]['records']
             logger.error(f"Got {len(data)} failed Kinesis records ({log_type})")
 
-            timestamp = log_type['first_timestamp']
+            timestamp = log_dict[log_type]['first_timestamp']
             key = FAILED_LOG_S3_PREFIX + '/' + timestamp.strftime("%Y-%m/%d/%Y-%m-%d-%H:%M:%S-")
-            key += log_type['first_id'] + ".gz"
+            key += log_dict[log_type]['first_id'] + ".gz"
 
             logger.info(f"Saving failed records to S3: s3://{FAILED_LOG_S3_BUCKET}/{key}")
             data = '\n'.join(str(f) for f in data)
