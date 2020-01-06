@@ -84,29 +84,31 @@ def append_to_dict(dictionary: dict, log_type: str, log_data: object, log_timest
     dictionary[log_type]['records'].append(log_data)
 
 
-def normalize_kinesis_payload(payload: dict):
+def normalize_kinesis_payload(p: dict):
     # Normalize messages from CloudWatch (subscription filters) and pass through anything else
     # https://docs.aws.amazon.com/ja_jp/AmazonCloudWatch/latest/logs/SubscriptionFilters.html
 
-    logger.debug(f"normalizer input: {payload}")
+    logger.debug(f"normalizer input: {p}")
 
     payloads = []
 
-    if len(payload) < 1:
-        logger.error(f"Got weird record: \"{payload}\", skipping")
+    if len(p) < 1:
+        logger.error(f"Got weird record: \"{p}\", skipping")
         return payloads
 
     # check if data is JSON and parse
     try:
-        payload = json.loads(payload)
+        payload = json.loads(p)
+        if type(payload) is not dict:
+            logger.error(f"Top-level JSON data is not an object, giving up: {payload}")
+            return payloads
 
     except JSONDecodeError:
-        logger.error(f"Non-JSON data found: {payload}, skipping")
+        logger.error(f"Non-JSON data found: {p}, giving up")
         return payloads
 
     if 'messageType' in payload:
-        logger.debug(f"Got payload looking like CloudWatch Logs via subscription filters: "
-                     f"{payload}")
+        logger.debug(f"Got payload looking like CloudWatch Logs via subscription filters: {payload}")
 
         if payload['messageType'] == "DATA_MESSAGE":
             if 'logEvents' in payload:
@@ -117,7 +119,12 @@ def normalize_kinesis_payload(payload: dict):
                         payload_parsed = json.loads(event['message'])
                         logger.debug(f"parsed payload: {payload_parsed}")
 
-                    except JSONDecodeError:
+                        if type(payload_parsed) is not dict:
+                            logger.error(f"Top-level JSON data in CWL payload is not an object, giving up: {payload}")
+                            continue
+
+                    except JSONDecodeError as e:
+                        logger.debug(e)
                         logger.debug(f"Non-JSON data found inside CWL message: {event}, giving up")
                         continue
 
@@ -136,7 +143,7 @@ def normalize_kinesis_payload(payload: dict):
             raise ValueError(f"Unknown messageType: {payload}")
     else:
         payloads.append(payload)
-        
+
     return payloads
 
 
