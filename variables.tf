@@ -17,6 +17,11 @@ variable "batch_size" {
   description = "Maximum number of records passed for a single Lambda invocation"
 }
 
+variable "enable_kinesis_mapping" {
+  description = "Determines if the event source mapping will be enbaled on creation"
+  default     = true
+}
+
 variable "lambda_package_url" {
   description = "Lambda package URL (see Usage in README)"
 }
