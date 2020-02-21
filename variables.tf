@@ -17,6 +17,11 @@ variable "batch_size" {
   description = "Maximum number of records passed for a single Lambda invocation"
 }
 
+variable "enable_kinesis_mapping" {
+  description = "Determines if the event source mapping will be enabled"
+  default     = true
+}
+
 variable "lambda_package_url" {
   description = "Lambda package URL (see Usage in README)"
 }
@@ -97,4 +102,3 @@ variable "log_retention_in_days" {
   description = "Lambda Function log retention in days"
   default     = 30
 }
-

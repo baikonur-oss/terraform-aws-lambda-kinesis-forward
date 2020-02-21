@@ -67,6 +67,7 @@ For more information on module version pinning, see [Selecting a Revision](https
 | Name | Description | Type | Default | Required |
 |------|-------------|:----:|:-----:|:-----:|
 | batch_size | Maximum number of records passed for a single Lambda invocation | string | - | yes |
+| enable_kinesis_mapping | Determines if the event source mapping will be enabled | string | `true` | no |
 | failed_log_s3_bucket | S3 bucket name for saving failed logs (ES API errors etc.) | string | - | yes |
 | failed_log_s3_prefix | Path prefix for failed logs | string | - | yes |
 | handler | Lambda Function handler (entrypoint) | string | `main.handler` | no |

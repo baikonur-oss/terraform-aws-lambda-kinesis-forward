@@ -65,7 +65,7 @@ resource "aws_lambda_function" "function" {
 resource "aws_lambda_event_source_mapping" "kinesis_mapping" {
   batch_size        = var.batch_size
   event_source_arn  = data.aws_kinesis_stream.source.arn
-  enabled           = true
+  enabled           = var.enable_kinesis_mapping
   function_name     = aws_lambda_function.function.arn
   starting_position = var.starting_position
 }
