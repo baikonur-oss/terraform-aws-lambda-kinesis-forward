@@ -18,7 +18,7 @@ variable "batch_size" {
 }
 
 variable "enable_kinesis_mapping" {
-  description = "Determines if the event source mapping will be enbaled on creation"
+  description = "Determines if the event source mapping will be enabled"
   default     = true
 }
 
@@ -102,4 +102,3 @@ variable "log_retention_in_days" {
   description = "Lambda Function log retention in days"
   default     = 30
 }
-
