@@ -95,62 +95,82 @@ def normalize_kinesis_payload(p: dict):
 
     logger.debug(f"normalizer input: {p}")
 
-    payloads = []
-
     if len(p) < 1:
-        logger.error(f"Got weird record: \"{p}\", skipping")
-        return payloads
+        logger.error(f"Got weird record, skipping: {p}")
+        return []
 
     # check if data is JSON and parse
     try:
         payload = json.loads(p)
         if type(payload) is not dict:
             logger.error(f"Top-level JSON data is not an object, giving up: {payload}")
-            return payloads
+            return []
 
     except JSONDecodeError:
         logger.error(f"Non-JSON data found: {p}, giving up")
+        return []
+
+    if 'messageType' not in payload:
+        return [payload]
+
+    # messageType is present in payload, must be coming from CloudWatch
+    logger.debug(f"Got payload looking like CloudWatch Logs via subscription filters: {payload}")
+
+    return extract_data_from_cwl_message(payload)
+
+
+def extract_data_from_cwl_message(payload):
+    # see: https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/SubscriptionFilters.html
+    if payload['messageType'] == "CONTROL_MESSAGE":
+        logger.info(f"Got CONTROL_MESSAGE from CloudWatch: {payload}, skipping")
+        return []
+
+    elif payload['messageType'] == "DATA_MESSAGE":
+        payloads = []
+
+        if 'logEvents' not in payload:
+            logger.error(f"Got DATA_MESSAGE from CloudWatch Logs but logEvents are not present, "
+                         f"skipping payload: {payload}")
+            return []
+
+        events = payload['logEvents']
+
+        for event in events:
+            # check if data is JSON and parse
+            try:
+                logger.debug(f"message: {event['message']}")
+                payload_parsed = json.loads(event['message'])
+                logger.debug(f"parsed payload: {payload_parsed}")
+
+                if type(payload_parsed) is not dict:
+                    logger.error(f"Top-level JSON data in CloudWatch Logs payload is not an object, skipping: "
+                                 f"{payload_parsed}")
+                    continue
+
+            except JSONDecodeError as e:
+                logger.debug(e)
+                logger.debug(f"Non-JSON data found inside CloudWatch Logs message: {event}, skipping")
+                continue
+
+            payloads.append(payload_parsed)
+
         return payloads
 
-    if 'messageType' in payload:
-        logger.debug(f"Got payload looking like CloudWatch Logs via subscription filters: {payload}")
-
-        if payload['messageType'] == "DATA_MESSAGE":
-            if 'logEvents' in payload:
-                for event in payload['logEvents']:
-                    # check if data is JSON and parse
-                    try:
-                        logger.debug(f"message: {event['message']}")
-                        payload_parsed = json.loads(event['message'])
-                        logger.debug(f"parsed payload: {payload_parsed}")
-
-                        if type(payload_parsed) is not dict:
-                            logger.error(f"Top-level JSON data in CWL payload is not an object, giving up: "
-                                         f"{payload_parsed}")
-                            continue
-
-                    except JSONDecodeError as e:
-                        logger.debug(e)
-                        logger.debug(f"Non-JSON data found inside CWL message: {event}, giving up")
-                        continue
-
-                    payloads.append(payload_parsed)
-
-            else:
-                logger.error(f"Got DATA_MESSAGE from CloudWatch but logEvents are not present, "
-                             f"skipping payload: {payload}")
-
-        elif payload['messageType'] == "CONTROL_MESSAGE":
-            logger.info(f"Got CONTROL_MESSAGE from CloudWatch: {payload}, skipping")
-            return payloads
-
-        else:
-            logger.error(f"Got unknown messageType, shutting down")
-            raise ValueError(f"Unknown messageType: {payload}")
     else:
-        payloads.append(payload)
+        logger.error(f"Got unknown messageType: {payload['messageType']} , skipping")
+        return []
 
-    return payloads
+
+def dict_get_default(dictionary, key, default, verbose=False):
+    if key not in dictionary:
+        logger.warning(f"Cannot retrieve field \"{key}\" "
+                       f"from data: {dictionary}")
+        if verbose:
+            logger.warning(f"Falling back to default value: {default}")
+        return default
+
+    else:
+        return dictionary[key]
 
 
 def decode_validate(raw_records: list):
