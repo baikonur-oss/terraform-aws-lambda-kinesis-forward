@@ -267,80 +267,94 @@ def kinesis_put(records, retries):
 
         records_to_send = failed_records
 
-def kinesis_put(log_records: list):
-    xray_recorder.begin_subsegment(f"kinesis put records")
+
+def kinesis_put_batch(log_records: list, max_retries: int):
+    parent_segment = xray_recorder.begin_subsegment(f"kinesis put records")
 
     retry_list = []
-    failed_list = []
+    failed_records = []
 
-    # Each PutRecords request can support up to 500 records
-    # see: https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/kinesis.html#Kinesis.Client.put_records
+    # Each PutRecords API request can support up to 500 records:
+    # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/kinesis.html#Kinesis.Client.put_records
 
     for batch_index, batch in enumerate(split_list(log_records, 500)):
-        records = []
-        for record in batch:
-            data_blob = json.dumps(record).encode('utf-8')
-            partition_key: str = ''.join(random.choices(RANDOM_ALPHANUMERICAL, k=20)) # max 256 chars
-            records.append({
-                'Data':            data_blob,
-                'PartitionKey':    partition_key,
-            })
+        records_to_send = create_kinesis_records(batch)
+        retries_left = max_retries
 
-        logger.debug(records)
-
-        retry_count = 0
-        while len(records) > 0:
-            subsegment = xray_recorder.begin_subsegment(f"put records batch {batch_index} retry {retry_count}")
-            response = kinesis_client.put_records(
-                Records=records,
+        while len(records_to_send) > 0:
+            subsegment = xray_recorder.begin_subsegment(f"PutRecords: batch no. {batch_index}")
+            kinesis_response = kinesis_client.put_records(
+                Records=records_to_send,
                 StreamName=TARGET_STREAM_NAME,
             )
-            subsegment.put_annotation("records", len(records))
-            subsegment.put_annotation("failed", response['FailedRecordCount'])
-            xray_recorder.end_subsegment()
+            subsegment.put_annotation("records", len(records_to_send))
+            subsegment.put_annotation("records_failed", kinesis_response['FailedRecordCount'])
+            subsegment.end_subsegment()
 
-            if response['FailedRecordCount'] == 0:
-                xray_recorder.end_subsegment()
+            if kinesis_response['FailedRecordCount'] == 0:
                 break
             else:
-                retry_count += 1
-                subsegment.put_annotation("failed_records", response['FailedRecordCount'])
-                for index, record in enumerate(response['Records']):
+                index: int
+                record: dict
+                for index, record in enumerate(kinesis_response['Records']):
                     if 'ErrorCode' in record:
-                        if record['ErrorCode'] == 'ProvisionedThroughputExceededException':
-                            retry_list.append(records[index])
-                        elif record['ErrorCode'] == 'InternalFailure':
-                            failed_list.append(records[index])
+                        # original records list and response record list have same order, guaranteed:
+                        # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/kinesis.html#Kinesis.Client.put_records
+                        logger.error(f"A record failed with error: {record['ErrorCode']} {record['ErrorMessage']}")
+                        failed_records.append(records_to_send[index])
 
-                records = retry_list
+                records_to_send = retry_list
                 retry_list = []
 
-                if len(retry_list) > 0:
-                    logger.info(f"Waiting 1 second for capacity")
-                    time.sleep(1)
-            xray_recorder.end_subsegment()
+                if retries_left == 0:
+                    error_msg = f"No retries left, giving up on records: {records_to_send}"
+                    logger.error(error_msg)
+                    raise KinesisException(error_msg)
 
-    xray_recorder.end_subsegment()
-    return failed_list
+                retries_left -= 1
+
+                logger.info(f"Waiting 500 ms before retrying")
+                time.sleep(0.5)
+
+    parent_segment.end_subsegment()
+    return failed_records
+
+
+def create_kinesis_records(batch):
+    random_alphanumerical = string.ascii_lowercase + string.ascii_uppercase + string.digits
+
+    records = []
+    record: str
+    for record in batch:
+        data_blob = json.dumps(record).encode('utf-8')
+        partition_key: str = ''.join(random.choices(random_alphanumerical, k=20))  # max 256 chars
+        records.append({
+            'Data':         data_blob,
+            'PartitionKey': partition_key,
+        })
+    logger.debug(f"Formed Kinesis Records batch for PutRecords API: {records}")
+    return records
 
 
 def save_failed(log_dict: dict):
     for log_type in log_dict:
-        if log_type.startswith(LOG_TYPE_UNKNOWN_PREFIX):
-            xray_recorder.begin_subsegment(f"bad data upload: {log_type}")
+        if not log_type.startswith(LOG_TYPE_UNKNOWN_PREFIX):
+            continue
 
-            data = log_dict[log_type]['records']
-            logger.error(f"Got {len(data)} failed Kinesis records ({log_type})")
+        xray_recorder.begin_subsegment(f"bad data upload: {log_type}")
 
-            timestamp = log_dict[log_type]['first_timestamp']
-            key = FAILED_LOG_S3_PREFIX + '/' + timestamp.strftime("%Y-%m/%d/%Y-%m-%d-%H:%M:%S-")
-            key += log_dict[log_type]['first_id'] + ".gz"
+        data = log_dict[log_type]['records']
+        logger.error(f"Got {len(data)} failed Kinesis records ({log_type})")
 
-            logger.info(f"Saving failed records to S3: s3://{FAILED_LOG_S3_BUCKET}/{key}")
-            data = '\n'.join(str(f) for f in data)
-            put_to_s3_gzip(key, FAILED_LOG_S3_BUCKET, data)
+        timestamp = log_dict[log_type]['first_timestamp']
+        key = FAILED_LOG_S3_PREFIX + '/' + timestamp.strftime("%Y-%m/%d/%Y-%m-%d-%H:%M:%S-")
+        key += log_dict[log_type]['first_id'] + ".gz"
 
-            xray_recorder.end_subsegment()
+        logger.info(f"Saving failed records to S3: s3://{FAILED_LOG_S3_BUCKET}/{key}")
+        data = '\n'.join(str(f) for f in data)
+        put_to_s3_gzip(key, FAILED_LOG_S3_BUCKET, data)
+
+        xray_recorder.end_subsegment()
 
 
 def put_to_s3_gzip(key: str, bucket: str, data: str):
@@ -366,14 +380,6 @@ def put_to_s3_gzip(key: str, bucket: str, data: str):
 
 
 def handler(event, context):
-    # check if stream exists:
-    response = kinesis_client.describe_stream(
-        StreamName=TARGET_STREAM_NAME,
-    )
-
-    if not response:
-        raise kinesis_client.exceptions.ResourceNotFoundException()
-
     raw_records = event['Records']
 
     logger.debug(raw_records)
@@ -386,7 +392,7 @@ def handler(event, context):
 
     for key in log_dict_filtered:
         logger.info(f"Processing log type {key}, {len(log_dict_filtered[key]['records'])} records")
-        failed_records = kinesis_put(log_dict_filtered[key]['records'])
+        failed_records = kinesis_put_batch(log_dict_filtered[key]['records'], KINESIS_MAX_RETRIES)
         if len(failed_records) > 0:
             logger.error(f"Got failed records from Kinesis: {failed_records}")
 
