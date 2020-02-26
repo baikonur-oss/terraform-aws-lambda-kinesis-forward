@@ -35,9 +35,6 @@ patch(libraries)
 s3 = boto3.client('s3')
 kinesis_client = boto3.client('kinesis')
 
-# consts
-RANDOM_ALPHANUMERICAL = string.ascii_lowercase + string.ascii_uppercase + string.digits
-
 # configure with env vars
 FAILED_LOG_S3_PREFIX: str = os.environ['FAILED_LOG_S3_PREFIX']
 FAILED_LOG_S3_BUCKET: str = os.environ['FAILED_LOG_S3_BUCKET']
@@ -174,7 +171,7 @@ def dict_get_default(dictionary, key, default, verbose=False):
 
 
 def decode_validate(raw_records: list):
-    xray_recorder.begin_subsegment('decode and validate')
+    parent_segment = xray_recorder.begin_subsegment('decode and validate')
 
     log_dict = dict()
 
@@ -183,74 +180,92 @@ def decode_validate(raw_records: list):
     for record in iter_deaggregate_records(raw_records):
         logger.debug(f"raw Kinesis record: {record}")
         # Kinesis data is base64 encoded
-        decoded_data = base64.b64decode(record['kinesis']['data'])
+        raw_data = base64.b64decode(record['kinesis']['data'])
 
-        # check if base64 contents is gzip
-        # gzip magic number 0x1f 0x8b
-        if decoded_data[0] == 0x1f and decoded_data[1] == 0x8b:
-            decoded_data = gzip.decompress(decoded_data)
+        # check if raw data is gzip (log data from CloudWatch Logs subscription filters comes gzipped)
+        # gzip magic number: 0x1f 0x8b
+        if raw_data[0] == 0x1f and raw_data[1] == 0x8b:
+            raw_data = gzip.decompress(raw_data)
 
-        decoded_data = decoded_data.decode()
-        normalized_payloads = normalize_kinesis_payload(decoded_data)
-        logger.debug(f"Normalized payloads: {normalized_payloads}")
+        data = raw_data.decode()
+        payloads = normalize_kinesis_payload(data)
+        logger.debug(f"Normalized payloads: {payloads}")
 
-        for normalized_payload in normalized_payloads:
-            logger.debug(f"Parsing normalized payload: {normalized_payload}")
+        for payload in payloads:
+            logger.debug(f"Parsing normalized payload: {payload}")
+
+            log_type = dict_get_default(
+                payload,
+                key=LOG_TYPE_FIELD,
+                default=f"{LOG_TYPE_UNKNOWN_PREFIX}/unknown_type",
+                verbose=True,
+            )
+
+            timestamp = dict_get_default(
+                payload,
+                key=LOG_TIMESTAMP_FIELD,
+                default=None,
+            )
+
+            log_id = dict_get_default(
+                payload,
+                key=LOG_ID_FIELD,
+                default=None,
+            )
+
+            # valid data
+            append_to_dict(log_dict, log_type, payload, log_timestamp=timestamp, log_id=log_id)
 
             processed_records += 1
 
-            # check if log type field is available
-            try:
-                log_type = normalized_payload[LOG_TYPE_FIELD]
-
-            except KeyError:
-                logger.error(f"Cannot retrieve necessary field \"{LOG_TYPE_FIELD}\" "
-                             f"from payload: {normalized_payload}")
-                log_type = f"{LOG_TYPE_UNKNOWN_PREFIX}/unknown_type"
-                logger.error(f"Marking as {log_type}")
-
-            # check if timestamp is present
-            try:
-                timestamp = normalized_payload[LOG_TIMESTAMP_FIELD]
-
-            except KeyError:
-                logger.error(f"Cannot retrieve recommended field \"{LOG_TIMESTAMP_FIELD}\" "
-                             f"from payload: {normalized_payload}")
-                timestamp = None
-
-            try:
-                log_id = normalized_payload[LOG_ID_FIELD]
-            except KeyError:
-                logger.error(f"Cannot retrieve recommended field \"{LOG_ID_FIELD}\" "
-                             f"from payload: {normalized_payload}")
-                log_id = None
-
-            # valid data
-            append_to_dict(log_dict, log_type, normalized_payload, log_timestamp=timestamp, log_id=log_id)
-
     logger.info(f"Processed {processed_records} records from Kinesis")
-    xray_recorder.end_subsegment()
+
+    parent_segment.end_subsegment()
     return log_dict
 
 
 def apply_whitelist(log_dict: dict, whitelist: list):
-    retval = dict()
+    r = dict()
     if len(whitelist) == 0:
         for key in log_dict.keys():
             if not key.startswith(LOG_TYPE_UNKNOWN_PREFIX):
-                retval[key] = log_dict[key]
-        return retval
+                r[key] = log_dict[key]
+        return r
 
     for entry in whitelist:
         if entry in log_dict:
-            retval[entry] = log_dict[entry]
-    return retval
+            r[entry] = log_dict[entry]
+    return r
 
 
-def split_list(l, size):
-    for i in range(0, len(l), size):
-        yield l[i:i+size]
+def split_list(lst, size):
+    for i in range(0, len(lst), size):
+        yield lst[i:i + size]
 
+
+def kinesis_put(records, retries):
+    records_to_send = records
+    retries_left = retries
+    failed_records = []
+
+    while retries_left > 0:
+        r = kinesis_client.put_records(
+            Records=records_to_send,
+            StreamName=TARGET_STREAM_NAME
+        )
+
+        failed_record_count = r['FailedRecordCount']
+
+        if failed_record_count == 0:
+            return
+
+        response_records = r['Records']
+        for index, record in enumerate(response_records):
+            if 'ErrorCode' in record:
+
+                failed_records.append(records[index])
+
+        records_to_send = failed_records
 
 def kinesis_put(log_records: list):
     xray_recorder.begin_subsegment(f"kinesis put records")
