@@ -87,8 +87,14 @@ variable "target_stream_name" {
   description = "Target Kinesis Data Stream name"
 }
 
+variable "kinesis_max_retries" {
+  description = "Times to retry PutRecords on errors (wait time between retires is 500ms)"
+  default     = 3
+  type        = number
+}
+
 variable "tracing_mode" {
-  description = "X-Ray tracing mode (see: https://docs.aws.amazon.com/lambda/latest/dg/API_TracingConfig.html )"
+  description = "X-Ray tracing mode \n(see: https://docs.aws.amazon.com/lambda/latest/dg/API_TracingConfig.html )"
   default     = "PassThrough"
 }
 

@@ -49,6 +49,11 @@ LOG_TYPE_FIELD_WHITELIST: list = str(os.environ['LOG_TYPE_WHITELIST']).split(','
 LOG_TYPE_UNKNOWN_PREFIX: str = os.environ['LOG_TYPE_UNKNOWN_PREFIX']
 
 TARGET_STREAM_NAME: str = os.environ['TARGET_STREAM_NAME']
+KINESIS_MAX_RETRIES: int = int(os.environ['KINESIS_MAX_RETRIES'])
+
+
+class KinesisException(Exception):
+    pass
 
 
 def append_to_dict(dictionary: dict, log_type: str, log_data: object, log_timestamp=None, log_id=None):
