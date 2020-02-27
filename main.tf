@@ -102,12 +102,22 @@ module "iam" {
             "Effect": "Allow",
             "Action": [
                 "kinesis:DescribeStream",
+                "kinesis:DescribeStreamSummary",
                 "kinesis:PutRecord",
                 "kinesis:PutRecords",
                 "kinesis:ListStreams"
             ],
             "Resource": [
                 "${data.aws_kinesis_stream.target.arn}"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "kinesis:SubscribeToShard",
+            ],
+            "Resource": [
+                "${data.aws_kinesis_stream.target.arn}/consumer/*:*"
             ]
         },
         {
