@@ -1,6 +1,6 @@
 # Amazon Kinesis to Kinesis log forwarding Terraform module
 
-Terraform module and Lambda for saving JSON log records from Kinesis Data Streams to S3.
+Terraform module and Lambda for transferring JSON log records from one Kinesis Data Streams stream to another, with key filtering.
 
 ![terraform v0.12.x](https://img.shields.io/badge/terraform-v0.12.x-brightgreen.svg)
 
@@ -9,7 +9,7 @@ Terraform module and Lambda for saving JSON log records from Kinesis Data Stream
     1. gzipped JSON, [CloudWatch Logs subscription filters log format](https://docs.aws.amazon.com/ja_jp/AmazonCloudWatch/latest/logs/SubscriptionFilters.html) are supported.
     2. Broken JSON logs or logs without log type will be saved to S3 as `unknown`.
 2. JSON data must have the following keys (key names are modifiable via variables):
-    1. `log_type`: Log type identifier. Used for applying log type whitelist 
+    1. `log_type`: Log type identifier. Used for filtering data sent to target stream.
 3. Recommended keys (necessary if target stream has [lambda-kinesis-to-s3](https://github.com/baikonur-oss/terraform-aws-lambda-kinesis-to-s3) or other modules attached):
     1. `log_id`: Any unique identifier. Used to avoid file overwrites on S3. Also is useful to search for a specific log record.
     2. `time`: Any timestamp supported by [dateutil.parser.parse](https://dateutil.readthedocs.io/en/stable/parser.html#dateutil.parser.parse). ISO8601 with milli/microseconds recommended.
