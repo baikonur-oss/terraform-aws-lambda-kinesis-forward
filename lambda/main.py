@@ -10,6 +10,7 @@ import string
 import time
 import uuid
 from json import JSONDecodeError
+from typing import List, Any, Tuple, Dict
 
 import boto3
 import dateutil.parser
@@ -42,8 +43,13 @@ FAILED_LOG_S3_BUCKET: str = os.environ['FAILED_LOG_S3_BUCKET']
 LOG_ID_FIELD: str = os.environ['LOG_ID_FIELD']
 LOG_TYPE_FIELD: str = os.environ['LOG_TYPE_FIELD']
 LOG_TIMESTAMP_FIELD: str = os.environ['LOG_TIMESTAMP_FIELD']
-LOG_TYPE_FIELD_WHITELIST: list = str(os.environ['LOG_TYPE_WHITELIST']).split(',')
 LOG_TYPE_UNKNOWN_PREFIX: str = os.environ['LOG_TYPE_UNKNOWN_PREFIX']
+
+LOG_TYPE_FIELD_WHITELIST_TMP: list = str(os.environ['LOG_TYPE_WHITELIST']).split(',')
+if len(LOG_TYPE_FIELD_WHITELIST_TMP) == 0:
+    LOG_TYPE_FIELD_WHITELIST = set()
+else:
+    LOG_TYPE_FIELD_WHITELIST = set(LOG_TYPE_FIELD_WHITELIST_TMP)
 
 TARGET_STREAM_NAME: str = os.environ['TARGET_STREAM_NAME']
 KINESIS_MAX_RETRIES: int = int(os.environ['KINESIS_MAX_RETRIES'])
@@ -53,29 +59,29 @@ class KinesisException(Exception):
     pass
 
 
-def append_to_dict(dictionary: dict, log_type: str, log_data: object, log_timestamp=None, log_id=None):
+def append_to_log_dict(dictionary: dict, log_type: str, log_data: object, log_timestamp=None, log_id=None):
     if log_type not in dictionary:
         # we've got first record for this type, initialize value for type
 
         # first record timestamp to use in file path
-        if log_timestamp:
+        if log_timestamp is None:
+            logger.info(f"No timestamp for first record")
+            logger.info(f"Falling back to current time for type \"{log_type}\"")
+            log_timestamp = datetime.datetime.now()
+        else:
             try:
                 log_timestamp = dateutil.parser.parse(log_timestamp)
             except TypeError:
                 logger.error(f"Bad timestamp: {log_timestamp}")
                 logger.info(f"Falling back to current time for type \"{log_type}\"")
                 log_timestamp = datetime.datetime.now()
-        else:
-            logger.info(f"No timestamp for first record")
-            logger.info(f"Falling back to current time for type \"{log_type}\"")
-            log_timestamp = datetime.datetime.now()
 
         # first record log_id field to use as filename suffix to prevent duplicate files
-        if log_id:
-            logger.info(f"Using first log record ID as filename suffix: {log_id}")
-        else:
+        if log_id is None:
             log_id = str(uuid.uuid4())
             logger.info(f"First log record ID is not available, using random ID as filename suffix instead: {log_id}")
+        else:
+            logger.info(f"Using first log record ID as filename suffix: {log_id}")
 
         dictionary[log_type] = {
             'records':         list(),
@@ -86,11 +92,11 @@ def append_to_dict(dictionary: dict, log_type: str, log_data: object, log_timest
     dictionary[log_type]['records'].append(log_data)
 
 
-def normalize_kinesis_payload(p: dict):
+def normalize_kinesis_payload(p: dict) -> List[dict]:
     # Normalize messages from CloudWatch (subscription filters) and pass through anything else
     # https://docs.aws.amazon.com/ja_jp/AmazonCloudWatch/latest/logs/SubscriptionFilters.html
 
-    logger.debug(f"normalizer input: {p}")
+    logger.debug(f"Normalizer input: {p}")
 
     if len(p) < 1:
         logger.error(f"Got weird record, skipping: {p}")
@@ -113,10 +119,10 @@ def normalize_kinesis_payload(p: dict):
     # messageType is present in payload, must be coming from CloudWatch
     logger.debug(f"Got payload looking like CloudWatch Logs via subscription filters: {payload}")
 
-    return extract_data_from_cwl_message(payload)
+    return extract_json_data_from_cwl_message(payload)
 
 
-def extract_data_from_cwl_message(payload):
+def extract_json_data_from_cwl_message(payload: dict) -> List[dict]:
     # see: https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/SubscriptionFilters.html
     if payload['messageType'] == "CONTROL_MESSAGE":
         logger.info(f"Got CONTROL_MESSAGE from CloudWatch: {payload}, skipping")
@@ -158,31 +164,49 @@ def extract_data_from_cwl_message(payload):
         return []
 
 
-def dict_get_default(dictionary, key, default, verbose=False):
+def dict_get_default(dictionary: dict, key: str, default: any, verbose: bool = False) -> Any:
+    """
+    Get key from dictionary if key is in dictionary, default value otherwise
+
+    :param dictionary: dictionary to retrieve key from
+    :param key: key name in dictionary
+    :param default: value to return if key is not in dictionary
+    :param verbose: output detailed warning message when returning default value
+    :return: value for key if key is in dictionary, default value otherwise
+    """
     if key not in dictionary:
-        logger.warning(f"Cannot retrieve field \"{key}\" "
-                       f"from data: {dictionary}")
         if verbose:
-            logger.warning(f"Falling back to default value: {default}")
-        return default
+            logger.warning(f"Cannot retrieve field \"{key}\" from data: {dictionary}, "
+                           f"falling back to default value: {default}")
+        return default, True
 
     else:
-        return dictionary[key]
+        return dictionary[key], False
 
 
-def decode_validate(raw_records: list):
-    parent_segment = xray_recorder.begin_subsegment('decode and validate')
+def parse_json_logs(raw_kinesis_records: list) -> List[dict]:
+    """
+    Deaggregates, decodes, decompresses Kinesis Records and parses them as JSON
+    events by log_type.
 
-    log_dict = dict()
+    :param raw_kinesis_records: Raw Kinesis records (usually event['Records'] in Lambda handler function)
+    :return:
+    """
+    parent_segment = xray_recorder.begin_subsegment('parse_json_logs')
+
+    all_payloads = list()
 
     processed_records = 0
 
-    for record in iter_deaggregate_records(raw_records):
-        logger.debug(f"raw Kinesis record: {record}")
+    for record in iter_deaggregate_records(raw_kinesis_records):
+        processed_records += 1
+
+        logger.debug(f"Raw Kinesis record: {record}")
+
         # Kinesis data is base64 encoded
         raw_data = base64.b64decode(record['kinesis']['data'])
 
-        # check if raw data is gzip (log data from CloudWatch Logs subscription filters comes gzipped)
+        # decompress data if raw data is gzip (log data from CloudWatch Logs subscription filters comes gzipped)
         # gzip magic number: 0x1f 0x8b
         if raw_data[0] == 0x1f and raw_data[1] == 0x8b:
             raw_data = gzip.decompress(raw_data)
@@ -192,101 +216,94 @@ def decode_validate(raw_records: list):
         logger.debug(f"Normalized payloads: {payloads}")
 
         for payload in payloads:
-            logger.debug(f"Parsing normalized payload: {payload}")
-
-            log_type = dict_get_default(
-                payload,
-                key=LOG_TYPE_FIELD,
-                default=f"{LOG_TYPE_UNKNOWN_PREFIX}/unknown_type",
-                verbose=True,
-            )
-
-            timestamp = dict_get_default(
-                payload,
-                key=LOG_TIMESTAMP_FIELD,
-                default=None,
-            )
-
-            log_id = dict_get_default(
-                payload,
-                key=LOG_ID_FIELD,
-                default=None,
-            )
-
-            # valid data
-            append_to_dict(log_dict, log_type, payload, log_timestamp=timestamp, log_id=log_id)
-
-            processed_records += 1
+            all_payloads.append(payload)
 
     logger.info(f"Processed {processed_records} records from Kinesis")
-
     parent_segment.end_subsegment()
-    return log_dict
+
+    return all_payloads
 
 
-def apply_whitelist(log_dict: dict, whitelist: list):
-    r = dict()
-    if len(whitelist) == 0:
-        for key in log_dict.keys():
-            if not key.startswith(LOG_TYPE_UNKNOWN_PREFIX):
-                r[key] = log_dict[key]
-        return r
+def parse_payloads_to_log_dict(payloads,
+                               log_id_key,
+                               log_timestamp_key,
+                               log_type_key,
+                               log_type_whitelist) -> Tuple[Dict[str, dict], Dict[str, dict]]:
 
-    for entry in whitelist:
-        if entry in log_dict:
-            r[entry] = log_dict[entry]
-    return r
+    log_dict = dict()
+    failed_dict = dict()
+
+    for payload in payloads:
+        target_dict = log_dict
+
+        logger.debug(f"Parsing normalized payload: {payload}")
+
+        log_type_unknown = f"{LOG_TYPE_UNKNOWN_PREFIX}/unknown_type"
+
+        log_type, log_type_missing = dict_get_default(
+            payload,
+            key=log_type_key,
+            default=log_type_unknown,
+            verbose=True,
+        )
+
+        if log_type_missing:
+            target_dict = failed_dict
+        else:
+            if (log_type_whitelist is not None) and (log_type not in log_type_whitelist):
+                continue
+
+        timestamp, _ = dict_get_default(
+            payload,
+            key=log_timestamp_key,
+            default=None,
+        )
+
+        log_id, _ = dict_get_default(
+            payload,
+            key=log_id_key,
+            default=None,
+        )
+
+        # valid data
+        append_to_log_dict(target_dict, log_type, payload, log_timestamp=timestamp, log_id=log_id)
+
+    return log_dict, failed_dict
 
 
-def split_list(lst, size):
+def split_list(lst: list, size: int) -> List[list]:
     for i in range(0, len(lst), size):
         yield lst[i:i + size]
 
 
-def kinesis_put(records, retries):
-    records_to_send = records
-    retries_left = retries
-    failed_records = []
-
-    while retries_left > 0:
-        r = kinesis_client.put_records(
-            Records=records_to_send,
-            StreamName=TARGET_STREAM_NAME
-        )
-
-        failed_record_count = r['FailedRecordCount']
-
-        if failed_record_count == 0:
-            return
-
-        response_records = r['Records']
-        for index, record in enumerate(response_records):
-            if 'ErrorCode' in record:
-
-                failed_records.append(records[index])
-
-        records_to_send = failed_records
+def kinesis_put_batch_json(client, records: list, max_retries: int) -> None or List[dict]:
+    """
+    Put multiple records to Kinesis Data Streams using PutRecords API.
 
 
-def kinesis_put_batch(log_records: list, max_retries: int):
-    parent_segment = xray_recorder.begin_subsegment(f"kinesis put records")
+    :param client: Kinesis API client (e.g. boto3.client('kinesis') )
+    :param records: list of records to send. Records will be dumped with json.dumps
+    :param max_retries: Maximum retries for resending failed records
+    :return: Records failed to put in Kinesis Data Stream after all retries
+    """
+    parent_segment = xray_recorder.begin_subsegment(f"kinesis_put_batch_json")
 
     retry_list = []
-    failed_records = []
 
     # Each PutRecords API request can support up to 500 records:
     # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/kinesis.html#Kinesis.Client.put_records
 
-    for batch_index, batch in enumerate(split_list(log_records, 500)):
-        records_to_send = create_kinesis_records(batch)
+    for batch_index, batch in enumerate(split_list(records, 500)):
+        records_to_send = create_kinesis_records_json(batch)
         retries_left = max_retries
 
         while len(records_to_send) > 0:
-            subsegment = xray_recorder.begin_subsegment(f"PutRecords: batch no. {batch_index}")
-            kinesis_response = kinesis_client.put_records(
+            subsegment = xray_recorder.begin_subsegment(f"kinesis_put_batch_json try")
+            kinesis_response = client.put_records(
                 Records=records_to_send,
                 StreamName=TARGET_STREAM_NAME,
             )
+            subsegment.put_annotation("batch_index", batch_index)
             subsegment.put_annotation("records", len(records_to_send))
             subsegment.put_annotation("records_failed", kinesis_response['FailedRecordCount'])
             subsegment.end_subsegment()
@@ -301,7 +318,7 @@ def kinesis_put_batch(log_records: list, max_retries: int):
                         # original records list and response record list have same order, guaranteed:
                         # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/kinesis.html#Kinesis.Client.put_records
                         logger.error(f"A record failed with error: {record['ErrorCode']} {record['ErrorMessage']}")
-                        failed_records.append(records_to_send[index])
+                        retry_list.append(records_to_send[index])
 
                 records_to_send = retry_list
                 retry_list = []
@@ -309,7 +326,7 @@ def kinesis_put_batch(log_records: list, max_retries: int):
                 if retries_left == 0:
                     error_msg = f"No retries left, giving up on records: {records_to_send}"
                     logger.error(error_msg)
-                    raise KinesisException(error_msg)
+                    return records_to_send
 
                 retries_left -= 1
 
@@ -317,10 +334,11 @@ def kinesis_put_batch(log_records: list, max_retries: int):
                 time.sleep(0.5)
 
     parent_segment.end_subsegment()
-    return failed_records
+
+    return None
 
 
-def create_kinesis_records(batch):
+def create_kinesis_records_json(batch: List[dict]) -> List[dict]:
     random_alphanumerical = string.ascii_lowercase + string.ascii_uppercase + string.digits
 
     records = []
@@ -336,37 +354,43 @@ def create_kinesis_records(batch):
     return records
 
 
-def save_failed(log_dict: dict):
+def save_json_logs_to_s3(client, log_dict: dict, reason: str = "not specified"):
+    logger.info(f"Saving logs to S3. Reason: {reason}")
+
+    xray_recorder.begin_subsegment(f"s3 upload")
+
     for log_type in log_dict:
-        if not log_type.startswith(LOG_TYPE_UNKNOWN_PREFIX):
-            continue
-
-        xray_recorder.begin_subsegment(f"bad data upload: {log_type}")
-
-        data = log_dict[log_type]['records']
-        logger.error(f"Got {len(data)} failed Kinesis records ({log_type})")
+        xray_recorder.begin_subsegment(f"s3 upload: {log_type}")
 
         timestamp = log_dict[log_type]['first_timestamp']
         key = FAILED_LOG_S3_PREFIX + '/' + timestamp.strftime("%Y-%m/%d/%Y-%m-%d-%H:%M:%S-")
+
         key += log_dict[log_type]['first_id'] + ".gz"
 
-        logger.info(f"Saving failed records to S3: s3://{FAILED_LOG_S3_BUCKET}/{key}")
+        data = log_dict[log_type]['records']
         data = '\n'.join(str(f) for f in data)
-        put_to_s3_gzip(key, FAILED_LOG_S3_BUCKET, data)
+
+        logger.info(f"Saving logs to S3: s3://{FAILED_LOG_S3_BUCKET}/{key}")
+        put_to_s3(client, FAILED_LOG_S3_BUCKET, key, data, gzip_compress=True)
 
         xray_recorder.end_subsegment()
 
-
-def put_to_s3_gzip(key: str, bucket: str, data: str):
-    # gzip and put data to s3 in-memory
-    xray_recorder.begin_subsegment('gzip compress')
-    data_gz = gzip.compress(data.encode(), compresslevel=9)
     xray_recorder.end_subsegment()
+
+
+def put_to_s3(client, bucket: str, key: str, data: str, gzip_compress: bool = False):
+    if gzip_compress:
+        # gzip and put data to s3 in-memory
+        xray_recorder.begin_subsegment('gzip compress')
+        data_p = gzip.compress(data.encode(), compresslevel=9)
+        xray_recorder.end_subsegment()
+    else:
+        data_p = data
 
     xray_recorder.begin_subsegment('s3 upload')
     try:
-        with io.BytesIO(data_gz) as data_gz_fileobj:
-            s3_results = s3.upload_fileobj(data_gz_fileobj, bucket, key)
+        with io.BytesIO(data_p) as fileobj:
+            s3_results = client.upload_fileobj(fileobj, bucket, key)
 
         logger.info(f"S3 upload errors: {s3_results}")
 
@@ -381,19 +405,25 @@ def put_to_s3_gzip(key: str, bucket: str, data: str):
 
 def handler(event, context):
     raw_records = event['Records']
-
     logger.debug(raw_records)
 
-    log_dict: dict = decode_validate(raw_records)
-    save_failed(log_dict)
+    log_dict: dict
+    failed_dict: dict
 
-    log_dict_filtered: dict = apply_whitelist(log_dict, LOG_TYPE_FIELD_WHITELIST)
-    logger.debug(log_dict_filtered)
+    payloads = parse_json_logs(raw_records)
 
-    for key in log_dict_filtered:
-        logger.info(f"Processing log type {key}, {len(log_dict_filtered[key]['records'])} records")
-        failed_records = kinesis_put_batch(log_dict_filtered[key]['records'], KINESIS_MAX_RETRIES)
-        if len(failed_records) > 0:
-            logger.error(f"Got failed records from Kinesis: {failed_records}")
+    log_dict, failed_dict = parse_payloads_to_log_dict(
+        payloads,
+        LOG_TYPE_FIELD,
+        LOG_TIMESTAMP_FIELD,
+        LOG_ID_FIELD,
+        LOG_TYPE_FIELD_WHITELIST,
+    )
+
+    for key in log_dict:
+        logger.info(f"Processing log type {key}: {len(log_dict[key]['records'])} records")
+        kinesis_put_batch_json(kinesis_client, log_dict[key]['records'], KINESIS_MAX_RETRIES)
+
+    save_json_logs_to_s3(s3, failed_dict, reason="Failed logs")
 
     logger.info("Finished")
