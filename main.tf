@@ -90,6 +90,7 @@ module "iam" {
             "Effect": "Allow",
             "Action": [
                 "kinesis:DescribeStream",
+                "kinesis:DescribeStreamSummary",
                 "kinesis:GetShardIterator",
                 "kinesis:GetRecords",
                 "kinesis:ListStreams"
@@ -117,7 +118,7 @@ module "iam" {
                 "kinesis:SubscribeToShard",
             ],
             "Resource": [
-                "${data.aws_kinesis_stream.target.arn}/consumer/*:*"
+                "${data.aws_kinesis_stream.source.arn}/consumer/*:*"
             ]
         },
         {
