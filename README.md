@@ -66,28 +66,29 @@ For more information on module version pinning, see [Selecting a Revision](https
 
 | Name | Description | Type | Default | Required |
 |------|-------------|:----:|:-----:|:-----:|
-| batch_size | Maximum number of records passed for a single Lambda invocation | string | - | yes |
-| enable_kinesis_mapping | Determines if the event source mapping will be enabled | string | `true` | no |
-| failed_log_s3_bucket | S3 bucket name for saving failed logs (ES API errors etc.) | string | - | yes |
-| failed_log_s3_prefix | Path prefix for failed logs | string | - | yes |
-| handler | Lambda Function handler (entrypoint) | string | `main.handler` | no |
-| lambda_package_url | Lambda package URL (see Usage in README) | string | - | yes |
-| log_id_field | Key name for unique log ID | string | `log_id` | no |
-| log_retention_in_days | Lambda Function log retention in days | string | `30` | no |
-| log_timestamp_field | Key name for log timestamp | string | `time` | no |
-| log_type_field | Key name for log type | string | `log_type` | no |
-| log_type_field_whitelist | Log type whitelist (if empty, all types will be processed) | list(string) | `[]` | no |
-| log_type_unknown_prefix | Log type prefix for logs without log type field | string | `unknown` | no |
-| memory | Lambda Function memory in megabytes | string | `256` | no |
-| name | Resource name | string | - | yes |
-| runtime | Lambda Function runtime | string | `python3.7` | no |
-| source_stream_name | Source Kinesis Data Stream name | string | - | yes |
-| starting_position | Kinesis ShardIterator type (see: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_GetShardIterator.html ) | string | `TRIM_HORIZON` | no |
+| batch\_size | Maximum number of records passed for a single Lambda invocation | string | n/a | yes |
+| enable\_kinesis\_mapping | Determines if the event source mapping will be enabled | string | `"true"` | no |
+| failed\_log\_s3\_bucket | S3 bucket name for saving failed logs (ES API errors etc.) | string | n/a | yes |
+| failed\_log\_s3\_prefix | Path prefix for failed logs | string | n/a | yes |
+| handler | Lambda Function handler (entrypoint) | string | `"main.handler"` | no |
+| kinesis\_max\_retries | Times to retry PutRecords on errors (wait time between retires is 500ms) | number | `"3"` | no |
+| lambda\_package\_url | Lambda package URL (see Usage in README) | string | n/a | yes |
+| log\_id\_field | Key name for unique log ID | string | `"log_id"` | no |
+| log\_retention\_in\_days | Lambda Function log retention in days | string | `"30"` | no |
+| log\_timestamp\_field | Key name for log timestamp | string | `"time"` | no |
+| log\_type\_field | Key name for log type | string | `"log_type"` | no |
+| log\_type\_field\_whitelist | Log type whitelist (if empty, all types will be processed) | list(string) | `[]` | no |
+| log\_type\_unknown\_prefix | Log type prefix for logs without log type field | string | `"unknown"` | no |
+| memory | Lambda Function memory in megabytes | string | `"256"` | no |
+| name | Resource name | string | n/a | yes |
+| runtime | Lambda Function runtime | string | `"python3.7"` | no |
+| source\_stream\_name | Source Kinesis Data Stream name | string | n/a | yes |
+| starting\_position | Kinesis ShardIterator type (see: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_GetShardIterator.html ) | string | `"TRIM_HORIZON"` | no |
 | tags | Tags for Lambda Function | map(string) | `{}` | no |
-| target_stream_name | Target Kinesis Data Stream name | string | - | yes |
-| timeout | Lambda Function timeout in seconds | string | `60` | no |
-| timezone | tz database timezone name (e.g. Asia/Tokyo) | string | `UTC` | no |
-| tracing_mode | X-Ray tracing mode (see: https://docs.aws.amazon.com/lambda/latest/dg/API_TracingConfig.html ) | string | `PassThrough` | no |
+| target\_stream\_name | Target Kinesis Data Stream name | string | n/a | yes |
+| timeout | Lambda Function timeout in seconds | string | `"60"` | no |
+| timezone | tz database timezone name (e.g. Asia/Tokyo) | string | `"UTC"` | no |
+| tracing\_mode | X-Ray tracing mode  (see: https://docs.aws.amazon.com/lambda/latest/dg/API_TracingConfig.html ) | string | `"PassThrough"` | no |
 
 <!-- END OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
 

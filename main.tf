@@ -55,6 +55,7 @@ resource "aws_lambda_function" "function" {
       LOG_TIMESTAMP_FIELD     = var.log_timestamp_field
       LOG_TYPE_WHITELIST      = join(",", var.log_type_field_whitelist)
       TARGET_STREAM_NAME      = data.aws_kinesis_stream.target.name
+      KINESIS_MAX_RETRIES     = var.kinesis_max_retries
       FAILED_LOG_S3_BUCKET    = var.failed_log_s3_bucket
       FAILED_LOG_S3_PREFIX    = var.failed_log_s3_prefix
     }
