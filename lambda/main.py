@@ -1,12 +1,12 @@
+import json
 import logging
 import os
 
 import boto3
+from amazon_kinesis_utils import baikonur_logging
+from amazon_kinesis_utils import kinesis
 from aws_xray_sdk.core import patch
 from aws_xray_sdk.core import xray_recorder
-
-from .kinesis_logging_utils import baikonur_logging
-from .kinesis_logging_utils import kinesis
 
 # set up logging
 logger = logging.getLogger()
@@ -48,9 +48,15 @@ def handler(event, context):
     failed_dict = dict()
 
     xray_recorder.begin_subsegment('parse')
-    for payload in kinesis.parse_json_logs(raw_records):
+    for payload in kinesis.parse_records(raw_records):
+        try:
+            payload_parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            logger.debug(f"Ignoring non-JSON data: {payload}")
+            continue
+
         baikonur_logging.parse_payload_to_log_dict(
-            payload,
+            payload_parsed,
             log_dict,
             failed_dict,
             LOG_TYPE_FIELD,
@@ -64,7 +70,8 @@ def handler(event, context):
     xray_recorder.begin_subsegment('kinesis PutRecords')
     for key in log_dict:
         logger.info(f"Processing log type {key}: {len(log_dict[key]['records'])} records")
-        kinesis.put_batch_json(kinesis_client, TARGET_STREAM_NAME, log_dict[key]['records'], KINESIS_MAX_RETRIES)
+        records_json = [json.dumps(x) for x in log_dict[key]['records']]
+        kinesis.put_records_batch(kinesis_client, TARGET_STREAM_NAME, records_json, KINESIS_MAX_RETRIES)
     xray_recorder.end_subsegment()
 
     xray_recorder.begin_subsegment('s3 upload')
