@@ -3,6 +3,7 @@
 Terraform module and Lambda for transferring JSON log records from one Kinesis Data Streams stream to another, with key filtering.
 
 ![terraform v0.12.x](https://img.shields.io/badge/terraform-v0.12.x-brightgreen.svg)
+[![Language grade: Python](https://img.shields.io/lgtm/grade/python/g/baikonur-oss/terraform-aws-lambda-kinesis-forward.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/baikonur-oss/terraform-aws-lambda-kinesis-forward/context:python)
 
 ## Prerequisites
 1. Records in Kinesis stream must be valid JSON data. Non-JSON data will be **ignored**.
