@@ -1,4 +1,4 @@
-aws_kinesis_agg
+aws_kinesis_agg==1.1.2
 aws-xray-sdk
 python-dateutil
 amazon_kinesis_utils==0.1.6
