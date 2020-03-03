@@ -1,5 +1,5 @@
 aws_kinesis_agg
 aws-xray-sdk
 python-dateutil
-amazon_kinesis_utils==0.1.3
+amazon_kinesis_utils==0.1.5
 
