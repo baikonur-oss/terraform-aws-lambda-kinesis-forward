@@ -58,12 +58,13 @@ def handler(event, context):
         baikonur_logging.parse_payload_to_log_dict(
             payload_parsed,
             log_dict,
-            failed_dict,
-            LOG_TYPE_FIELD,
-            LOG_TIMESTAMP_FIELD,
-            LOG_ID_FIELD,
-            LOG_TYPE_UNKNOWN_PREFIX,
-            LOG_TYPE_FIELD_WHITELIST,
+            failed_dict=failed_dict,
+            log_id_key=LOG_ID_FIELD,
+            log_timestamp_key=LOG_TIMESTAMP_FIELD,
+            log_type_key=LOG_TYPE_FIELD,
+            log_type_unknown_prefix=LOG_TYPE_UNKNOWN_PREFIX,
+            log_type_whitelist=LOG_TYPE_FIELD_WHITELIST,
+            timestamp_required=False,
         )
     xray_recorder.end_subsegment()
 
